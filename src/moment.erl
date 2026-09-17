@@ -488,7 +488,9 @@ Week-year can differ from the civil year, including `-1` for `{date, 0, 1, 1}`.
 -spec iso_week(date() | datetime()) -> {iso_week_year(), 1..53}.
 iso_week({date, Y, M, D} = Date) ->
     require(is_date(Date)),
-    wrap_otp(fun() -> calendar:iso_week_number({Y, M, D}) end);
+    G = wrap_otp(fun() -> calendar:date_to_gregorian_days(Y, M, D) end),
+    Dow = wrap_otp(fun() -> calendar:day_of_the_week(Y, M, D) end),
+    iso_week_from_thursday(G + (4 - Dow));
 iso_week({datetime, _, _} = DT) ->
     require(is_datetime(DT)),
     iso_week(to_date(DT));
@@ -635,11 +637,7 @@ add_date(Date, Dur) ->
         0 ->
             Days = Us div ?MICROS_PER_DAY,
             G = wrap_otp(fun() -> calendar:date_to_gregorian_days(Y, M, D) end),
-            {Y2, M2, D2} = wrap_otp(fun() -> calendar:gregorian_days_to_date(G + Days) end),
-            case Y2 >= 0 andalso Y2 =< 9999 of
-                true -> {date, Y2, M2, D2};
-                false -> erlang:error(out_of_range)
-            end;
+            gregorian_days_to_civil_date(G + Days);
         _ ->
             erlang:error(badarg)
     end.
@@ -919,12 +917,50 @@ datetime_to_civil_us(DT) ->
 
 civil_us_to_datetime(CivilUs) ->
     {G, Us} = floor_div(CivilUs, ?MICROS_PER_SECOND),
-    {{Y, M, D}, {H, Min, S}} =
-        wrap_otp(fun() -> calendar:gregorian_seconds_to_datetime(G) end),
-    case Y >= 0 andalso Y =< 9999 of
-        true -> {datetime, {date, Y, M, D}, {time, H, Min, S, Us}};
-        false -> erlang:error(out_of_range)
+    try calendar:gregorian_seconds_to_datetime(G) of
+        {{Y, M, D}, {H, Min, S}} when Y >= 0, Y =< 9999 ->
+            {datetime, {date, Y, M, D}, {time, H, Min, S, Us}};
+        {{_, _, _}, {_, _, _}} ->
+            erlang:error(out_of_range)
+    catch
+        error:badarg -> erlang:error(out_of_range);
+        error:function_clause -> erlang:error(out_of_range)
     end.
+
+gregorian_days_to_civil_date(G) ->
+    try calendar:gregorian_days_to_date(G) of
+        {Y, M, D} when Y >= 0, Y =< 9999 ->
+            {date, Y, M, D};
+        {_, _, _} ->
+            erlang:error(out_of_range)
+    catch
+        error:badarg -> erlang:error(out_of_range);
+        error:function_clause -> erlang:error(out_of_range)
+    end.
+
+% OTP 27/28 `calendar` rejects year -1, so ISO week is computed from the week's Thursday.
+iso_week_from_thursday(ThursdayG) ->
+    {WeekYear, Jan4G} = iso_week_year_and_jan4(ThursdayG),
+    Week1ThursdayG = Jan4G + (4 - dow_at(Jan4G)),
+    {WeekYear, (ThursdayG - Week1ThursdayG) div 7 + 1}.
+
+iso_week_year_and_jan4(ThursdayG) when ThursdayG < 0 ->
+    {-1, 3 - gregorian_year_length(-1)};
+iso_week_year_and_jan4(ThursdayG) ->
+    {date, TY, _, _} = gregorian_days_to_civil_date(ThursdayG),
+    Jan4G = wrap_otp(fun() -> calendar:date_to_gregorian_days(TY, 1, 4) end),
+    {TY, Jan4G}.
+
+dow_at(G) when G >= 0 ->
+    {Y, M, D} = wrap_otp(fun() -> calendar:gregorian_days_to_date(G) end),
+    wrap_otp(fun() -> calendar:day_of_the_week(Y, M, D) end);
+dow_at(G) ->
+    D0 = wrap_otp(fun() -> calendar:day_of_the_week(0, 1, 1) end),
+    ((D0 - 1 + G) rem 7 + 7) rem 7 + 1.
+
+gregorian_year_length(Y) when Y rem 4 =:= 0, Y rem 100 =/= 0 -> 366;
+gregorian_year_length(Y) when Y rem 400 =:= 0 -> 366;
+gregorian_year_length(_) -> 365.
 
 time_to_us({time, H, Min, S, Us} = Time) ->
     require(is_time(Time)),
