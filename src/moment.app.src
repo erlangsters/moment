@@ -1,0 +1,16 @@
+{application, moment, [
+  {description, "A typed civil-time library for Erlang."},
+  {vsn, "0.0.1"},
+  {modules, [moment]},
+  {registered, []},
+  {applications, [
+    kernel,
+    stdlib
+  ]},
+  {optional_applications, []},
+  {env, []},
+  {licenses, ["MIT"]},
+  {links, [
+    {"GitHub", "https://github.com/erlangsters/moment"}
+  ]}
+]}.
